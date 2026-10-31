@@ -1,0 +1,61 @@
+{
+  "name": "@local/tool-skill-manager",
+  "version": "0.2.0",
+  "description": "Per-project and per-agent controls for plugins, tools, and skills in DeepSeek Harness.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./icon.svg": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "locale",
+    "README.md"
+  ],
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.1.2-rc.1 <0.3.0"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-connection"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "skills",
+    "tools",
+    "project-isolation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZeaoZhang/dsh-tool-skill-manager.git"
+  },
+  "homepage": "https://github.com/ZeaoZhang/dsh-tool-skill-manager#readme",
+  "bugs": {
+    "url": "https://github.com/ZeaoZhang/dsh-tool-skill-manager/issues"
+  }
+}

@@ -1,0 +1,29 @@
+# This bundle inserts its own row so the plugin is mounted from one place.
+#
+# The id below is load-bearing: DSH's Settings page persists through
+# configEditor, which only addresses an entry whose id appears exactly once among
+# the profile root Include's children. This row is composed at the root, so the
+# editor does see it — but the profile may still add its own row with the same id
+# to seed persistent settings:
+#
+#   - id: tool-skill-manager
+#     name: '@local/tool-skill-manager'
+#     config:
+#       disabledTools: [...]
+#       disabledSkills: [...]
+#       projects:
+#         /absolute/project/root:
+#           tools:
+#             some_tool: true      # force on even when disabled profile-wide
+#           skills:
+#             some-skill: false    # force off for this project
+#           disabledPlugins: [project-plugin-name]
+#
+# Keep the id stable. Changing it, or inserting a second row with the same id,
+# makes the entry ambiguous and the Settings page stops being able to save.
+- insert:
+    - id: tool-skill-manager
+      name: '@local/tool-skill-manager'
+      config:
+        disabledTools: []
+        disabledSkills: []
