@@ -17,7 +17,6 @@
 #             some_tool: true      # force on even when disabled profile-wide
 #           skills:
 #             some-skill: false    # force off for this project
-#           disabledPlugins: [project-plugin-name]
 #
 # Keep the id stable. Changing it, or inserting a second row with the same id,
 # makes the entry ambiguous and the Settings page stops being able to save.

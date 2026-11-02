@@ -7,10 +7,9 @@ window.__ModuleLoader__.load({
     const PROFILE_SCOPE = 'profile';
     const L = {
       zh: {
-        title: '工具、技能与插件',
+        title: '工具/技能管理',
         tools: '工具',
         skills: '技能',
-        plugins: '插件',
         scopeLabel: '作用范围',
         profileScope: '配置档默认（所有项目）',
         addProject: '添加项目…',
@@ -18,7 +17,7 @@ window.__ModuleLoader__.load({
         confirmAdd: '添加',
         cancel: '取消',
         removeProject: '移除项目',
-        removeProjectConfirm: '移除该项目的全部项目级覆写？（不会删除项目插件文件）',
+        removeProjectConfirm: '移除该项目的全部项目级覆写？',
         confirmRemove: '确认移除',
         search: '搜索名称或说明',
         enabledCount: '已启用 {enabled} / {total}',
@@ -42,20 +41,11 @@ window.__ModuleLoader__.load({
         noTools: '当前没有可管理的全局工具',
         refresh: '刷新',
         bulkFiltered: '{action}（仅作用于当前筛选出的 {count} 项）',
-        pluginHelpProfile: '配置档插件在启动时加载、对整个配置档生效，无法按项目卸载。请到「设置 → 插件」管理它们。',
-        pluginHelpProject: '项目插件位于 {dir}。放置 *.mjs 文件（default export 一个 Cordis 插件）即可只为本项目的会话注册工具与技能。',
-        pluginEmpty: '该项目还没有项目插件。',
-        reloadPlugins: '重新加载插件',
-        pluginMounted: '已挂载',
-        pluginFailed: '挂载失败',
-        pluginAvailable: '待挂载',
-        pluginDisabled: '已关闭',
       },
       en: {
-        title: 'Tools, Skills & Plugins',
+        title: 'Tools & Skills',
         tools: 'Tools',
         skills: 'Skills',
-        plugins: 'Plugins',
         scopeLabel: 'Scope',
         profileScope: 'Profile defaults (all projects)',
         addProject: 'Add project…',
@@ -63,7 +53,7 @@ window.__ModuleLoader__.load({
         confirmAdd: 'Add',
         cancel: 'Cancel',
         removeProject: 'Remove project',
-        removeProjectConfirm: 'Remove all project-level overrides? Project plugin files are left untouched.',
+        removeProjectConfirm: 'Remove all project-level overrides?',
         confirmRemove: 'Confirm remove',
         search: 'Search names or descriptions',
         enabledCount: '{enabled} of {total} enabled',
@@ -87,14 +77,6 @@ window.__ModuleLoader__.load({
         noTools: 'No global tools are currently available',
         refresh: 'Refresh',
         bulkFiltered: '{action} (applies only to the {count} filtered rows)',
-        pluginHelpProfile: 'Profile plugins load at startup and apply to the whole profile; they cannot be unloaded for a single project. Manage them under Settings → Plugins.',
-        pluginHelpProject: 'Project plugins live in {dir}. Drop a *.mjs file there (default-exporting a Cordis plugin) to register tools and skills for this project’s sessions only.',
-        pluginEmpty: 'This project has no project plugins yet.',
-        reloadPlugins: 'Reload plugins',
-        pluginMounted: 'Mounted',
-        pluginFailed: 'Mount failed',
-        pluginAvailable: 'Available',
-        pluginDisabled: 'Disabled',
       },
     };
     const CSS = `
@@ -129,8 +111,6 @@ window.__ModuleLoader__.load({
       .tsm__toggle input { width:16px; height:16px; margin:0; accent-color:var(--dsw-alias-brand-primary); }
       .tsm__danger { color:var(--dsw-alias-state-error-primary); }
       .tsm__action:disabled, .tsm__refresh:disabled, .tsm__toggle input:disabled, .tsm__select:disabled { opacity:.55; cursor:default; }
-      .tsm__help { margin:0; padding:12px 14px; border:1px solid var(--dsw-alias-border-l1); border-radius:6px; background:var(--dsw-alias-bg-layer-1); line-height:1.55; }
-      .tsm__help code { overflow-wrap:anywhere; }
       .tsm__hint { font-size:11px; white-space:nowrap; }
       .tsm__status { min-height:18px; color:var(--dsw-alias-label-secondary); }
       .tsm__error { color:var(--dsw-alias-state-error-primary); }
@@ -219,7 +199,7 @@ window.__ModuleLoader__.load({
 
       const projectScope = scope !== PROFILE_SCOPE;
       const projects = catalog ? catalog.projects : [];
-      const entries = catalog ? (tab === 'tools' ? catalog.tools : tab === 'skills' ? catalog.skills : []) : [];
+      const entries = catalog ? (tab === 'tools' ? catalog.tools : catalog.skills) : [];
       const normalizedQuery = query.trim().toLocaleLowerCase();
       const visible = entries.filter((entry) => {
         if (!normalizedQuery) return true;
@@ -310,82 +290,30 @@ window.__ModuleLoader__.load({
         h('div', { className: 'tsm__segments', role: 'group', 'aria-label': translate('title') },
           h('button', { type: 'button', 'aria-pressed': tab === 'tools', disabled: busy, onClick: () => setTab('tools') }, translate('tools')),
           h('button', { type: 'button', 'aria-pressed': tab === 'skills', disabled: busy, onClick: () => setTab('skills') }, translate('skills')),
-          h('button', { type: 'button', 'aria-pressed': tab === 'plugins', disabled: busy, onClick: () => setTab('plugins') }, translate('plugins')),
         ),
-        tab === 'plugins'
-          ? null
-          : h('input', {
-              className: 'tsm__search',
-              type: 'search',
-              value: query,
-              placeholder: translate('search'),
-              'aria-label': translate('search'),
-              onChange: (event) => setQuery(event.target.value),
-            }),
-        tab === 'plugins'
-          ? h('button', {
-              className: 'tsm__refresh',
-              type: 'button',
-              disabled: busy || loading || !projectScope,
-              onClick: () => update('refreshProjectPlugins', { scope }),
-            }, translate('reloadPlugins'))
-          : h(React.Fragment, null,
-              h('button', { className: 'tsm__action', type: 'button', disabled: busy || bulkScope.length === 0, title: bulkTitle('enableAll'), onClick: () => update('setAll', { scope, kind: tab, enabled: true, names: bulkScope.map((entry) => entry.name) }) }, translate('enableAll')),
-              h('button', { className: 'tsm__action', type: 'button', disabled: busy || bulkScope.length === 0, title: bulkTitle('disableAll'), onClick: () => update('setAll', { scope, kind: tab, enabled: false, names: bulkScope.map((entry) => entry.name) }) }, translate('disableAll')),
-              projectScope
-                ? h('button', { className: 'tsm__action', type: 'button', disabled: busy || bulkScope.length === 0, onClick: () => update('clearAll', { scope, kind: tab, names: bulkScope.map((entry) => entry.name) }) }, translate('clearOverrides'))
-                : null,
-            ),
+        h('input', {
+          className: 'tsm__search',
+          type: 'search',
+          value: query,
+          placeholder: translate('search'),
+          'aria-label': translate('search'),
+          onChange: (event) => setQuery(event.target.value),
+        }),
+        h(React.Fragment, null,
+          h('button', { className: 'tsm__action', type: 'button', disabled: busy || bulkScope.length === 0, title: bulkTitle('enableAll'), onClick: () => update('setAll', { scope, kind: tab, enabled: true, names: bulkScope.map((entry) => entry.name) }) }, translate('enableAll')),
+          h('button', { className: 'tsm__action', type: 'button', disabled: busy || bulkScope.length === 0, title: bulkTitle('disableAll'), onClick: () => update('setAll', { scope, kind: tab, enabled: false, names: bulkScope.map((entry) => entry.name) }) }, translate('disableAll')),
+          projectScope
+            ? h('button', { className: 'tsm__action', type: 'button', disabled: busy || bulkScope.length === 0, onClick: () => update('clearAll', { scope, kind: tab, names: bulkScope.map((entry) => entry.name) }) }, translate('clearOverrides'))
+            : null,
+        ),
         h('button', { className: 'tsm__refresh', type: 'button', disabled: busy || loading, onClick: () => load(scope) }, translate('refresh')),
-        h('div', { className: 'tsm__count' }, tab === 'plugins'
-          ? String(catalog && catalog.plugins ? catalog.plugins.length : 0)
-          : catalog ? translate('enabledCount', { enabled: enabledCount, total: entries.length }) : translate('loading')),
+        h('div', { className: 'tsm__count' }, catalog ? translate('enabledCount', { enabled: enabledCount, total: entries.length }) : translate('loading')),
       ));
 
       if (error) children.push(h('div', { className: 'tsm__status tsm__error', role: 'alert', key: 'error' }, `${translate('errorLabel')}: ${error}`));
       else children.push(h('div', { className: 'tsm__status', 'aria-live': 'polite', key: 'status' }, busy ? translate('saving') : loading ? translate('loading') : ''));
 
-      if (tab === 'plugins') {
-        if (!projectScope) {
-          children.push(h('p', { className: 'tsm__help', key: 'profile-plugins' }, translate('pluginHelpProfile')));
-        } else {
-          children.push(h('p', { className: 'tsm__help', key: 'project-plugins' },
-            translate('pluginHelpProject', { dir: catalog && catalog.pluginDir ? catalog.pluginDir : '' })));
-          const plugins = catalog ? catalog.plugins : [];
-          if (plugins.length === 0) {
-            children.push(h('div', { className: 'tsm__empty', key: 'no-plugins' }, translate('pluginEmpty')));
-          } else {
-            children.push(h('div', { className: 'tsm__list', key: 'plugin-list' }, plugins.map((plugin) => {
-              const status = !plugin.enabled
-                ? translate('pluginDisabled')
-                : plugin.status === 'mounted'
-                  ? translate('pluginMounted')
-                  : plugin.status === 'failed'
-                    ? translate('pluginFailed')
-                    : translate('pluginAvailable');
-              return h('div', { className: 'tsm__row', key: plugin.name },
-                h('div', { className: 'tsm__main' },
-                  h('h3', { className: 'tsm__name' }, plugin.name),
-                  h('p', { className: 'tsm__description' }, plugin.path),
-                  plugin.error ? h('div', { className: 'tsm__policy tsm__error' }, plugin.error) : null,
-                ),
-                h('div', { className: 'tsm__controls' },
-                  h('span', { className: 'tsm__hint' }, status),
-                  h('label', { className: 'tsm__toggle' },
-                    h('input', {
-                      type: 'checkbox',
-                      checked: plugin.enabled,
-                      disabled: busy,
-                      onChange: (event) => update('setPluginEnabled', { scope, name: plugin.name, enabled: event.target.checked }),
-                    }),
-                    h('span', null, plugin.enabled ? translate('stateEnabled') : translate('stateDisabled')),
-                  ),
-                ),
-              );
-            })));
-          }
-        }
-      } else if (!loading && tab === 'tools' && entries.length === 0) {
+      if (!loading && tab === 'tools' && entries.length === 0) {
         children.push(h('div', { className: 'tsm__empty', key: 'no-tools' }, translate('noTools')));
       } else if (!loading && visible.length === 0) {
         children.push(h('div', { className: 'tsm__empty', key: 'empty' }, translate('empty')));

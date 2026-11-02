@@ -1,7 +1,7 @@
 {
   "name": "@local/tool-skill-manager",
-  "version": "0.2.0",
-  "description": "Per-project and per-agent controls for plugins, tools, and skills in DeepSeek Harness.",
+  "version": "0.3.0",
+  "description": "Per-project controls for tools and skills in DeepSeek Harness.",
   "license": "MIT",
   "type": "module",
   "main": "./index.js",
@@ -45,7 +45,7 @@
   "keywords": [
     "deepseek-harness",
     "dsh",
-    "plugin",
+    "dsh-plugin",
     "skills",
     "tools",
     "project-isolation"

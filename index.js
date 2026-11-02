@@ -1,7 +1,6 @@
 import { existsSync, statSync } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -14,8 +13,6 @@ const PROVIDER_NAME = 'tool-skill-manager-disabled';
 const PLUGIN_ID = 'tool-skill-manager';
 const DISABLED_INVOCATION = Object.freeze({ modelInvocable: false, userInvocable: false });
 const PROFILE_SCOPE = 'profile';
-const PLUGIN_DIRECTORY = ['.dsh', 'plugins'];
-const PLUGIN_EXTENSIONS = new Set(['.mjs', '.js']);
 
 export const inject = ['agents', 'configEditor', 'connection', 'tools', 'workingDirectory'];
 
@@ -102,7 +99,6 @@ function loadProjects(value) {
     projects.set(normalizeRoot(rawRoot.trim()), {
       tools: asOverride(rawEntry.tools),
       skills: asOverride(rawEntry.skills, isSkillName),
-      disabledPlugins: asSet(rawEntry.disabledPlugins),
     });
   }
   return projects;
@@ -131,7 +127,7 @@ export async function apply(ctx, config = {}) {
   }
 
   function emptyProject() {
-    return { tools: new Map(), skills: new Map(), disabledPlugins: new Set() };
+    return { tools: new Map(), skills: new Map() };
   }
 
   function projectEntry(root, create = false) {
@@ -167,7 +163,6 @@ export async function apply(ctx, config = {}) {
           {
             tools: new Map(entry.tools),
             skills: new Map(entry.skills),
-            disabledPlugins: new Set(entry.disabledPlugins),
           },
         ]),
       ),
@@ -183,7 +178,6 @@ export async function apply(ctx, config = {}) {
         {
           tools: new Map(entry.tools),
           skills: new Map(entry.skills),
-          disabledPlugins: new Set(entry.disabledPlugins),
         },
       ]),
     );
@@ -194,11 +188,9 @@ export async function apply(ctx, config = {}) {
     for (const [root, entry] of [...projects].sort(([left], [right]) => left.localeCompare(right))) {
       const tools = Object.fromEntries([...entry.tools].sort(([left], [right]) => left.localeCompare(right)));
       const skills = Object.fromEntries([...entry.skills].sort(([left], [right]) => left.localeCompare(right)));
-      const disabledPlugins = [...entry.disabledPlugins].sort();
       serialized[root] = {
         ...(Object.keys(tools).length > 0 ? { tools } : {}),
         ...(Object.keys(skills).length > 0 ? { skills } : {}),
-        ...(disabledPlugins.length > 0 ? { disabledPlugins } : {}),
       };
     }
     return serialized;
@@ -249,7 +241,7 @@ export async function apply(ctx, config = {}) {
   async function persistNow() {
     const entry = findConfigEntry();
     if (!entry) {
-      throw new Error('The Tools, Skills and Plugins Manager config entry is unavailable: this profile has no uniquely addressable `- id: tool-skill-manager` row, so the Settings page cannot save. Add that row to the profile cordis.patch.yml (or remove the duplicate) and restart.');
+      throw new Error('The Tools & Skills Manager config entry is unavailable: this profile has no uniquely addressable `- id: tool-skill-manager` row, so the Settings page cannot save. Add that row to the profile cordis.patch.yml (or remove the duplicate) and restart.');
     }
     await configEditor.edit(entry, (current) => ({
       ...current,
@@ -316,7 +308,7 @@ export async function apply(ctx, config = {}) {
             source: original?.source || candidate?.source || 'runtime',
             provider: PROVIDER_NAME,
             ...(original?.resourceBase ? { resourceBase: original.resourceBase } : {}),
-            content: `The skill "${name}" is disabled for project ${state.projectRoot ?? 'this workspace'} by the Tools, Skills and Plugins Manager.`,
+            content: `The skill "${name}" is disabled for project ${state.projectRoot ?? 'this workspace'} by the Tools & Skills Manager.`,
           };
         },
       };
@@ -353,102 +345,6 @@ export async function apply(ctx, config = {}) {
   }
 
   // ---------------------------------------------------------------------------
-  // Project plugin packs: `<projectRoot>/.dsh/plugins/*.mjs` default-export a
-  // Cordis plugin. Mounting it on the agent context gives the project its own
-  // tools and skills and unmounts them with the project policy.
-  // ---------------------------------------------------------------------------
-
-  async function listProjectPlugins(root) {
-    const directory = join(root, ...PLUGIN_DIRECTORY);
-    let dirents;
-    try {
-      dirents = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if (error?.code !== 'ENOENT') warn(ctx, `Could not read project plugin directory ${directory}`, error);
-      return [];
-    }
-    const files = [];
-    for (const dirent of dirents) {
-      if (!dirent.isFile() && !dirent.isSymbolicLink()) continue;
-      const dot = dirent.name.lastIndexOf('.');
-      if (dot <= 0) continue;
-      const extension = dirent.name.slice(dot);
-      if (!PLUGIN_EXTENSIONS.has(extension)) continue;
-      files.push({
-        name: dirent.name.slice(0, dot),
-        fileName: dirent.name,
-        path: join(directory, dirent.name),
-      });
-    }
-    files.sort((left, right) => left.name.localeCompare(right.name));
-    return files;
-  }
-
-  async function releaseMount(mount) {
-    try {
-      await mount?.release?.();
-    } catch (error) {
-      warn(ctx, 'Could not release a project plugin', error);
-    }
-  }
-
-  function schedulePluginSync(state) {
-    state.pluginQueue = (state.pluginQueue || Promise.resolve())
-      .then(() => syncProjectPlugins(state))
-      .catch((error) => warn(ctx, `Could not sync project plugins for agent ${state.agent.id}`, error));
-    return state.pluginQueue;
-  }
-
-  async function syncProjectPlugins(state) {
-    if (!state.active) return;
-    // A failed mount is retried on the next sync so a transient import error does
-    // not leave the project without its tools for the rest of the session.
-    for (const [name, mount] of [...state.pluginMounts]) {
-      if (mount.failed) state.pluginMounts.delete(name);
-    }
-    const files = state.projectRoot ? await listProjectPlugins(state.projectRoot) : [];
-    const disabled = projectEntry(state.projectRoot)?.disabledPlugins ?? new Set();
-    const wanted = new Map(files.filter((file) => !disabled.has(file.name)).map((file) => [file.name, file]));
-
-    for (const [name, mount] of [...state.pluginMounts]) {
-      const file = wanted.get(name);
-      if (file && file.path === mount.path) continue;
-      await releaseMount(mount);
-      state.pluginMounts.delete(name);
-    }
-
-    for (const [name, file] of wanted) {
-      if (state.pluginMounts.has(name)) continue;
-      try {
-        const info = await stat(file.path);
-        const module = await import(`${pathToFileURL(file.path).href}?v=${info.mtimeMs}`);
-        const plugin = module.default ?? module;
-        const fiber = state.agent.ctx.plugin(plugin);
-        // Cordis fibers are awaitable; awaiting surfaces activation failures here
-        // instead of as an unhandled rejection later.
-        await Promise.resolve(fiber);
-        state.pluginMounts.set(name, {
-          path: file.path,
-          release: async () => {
-            try {
-              await fiber?.dispose?.();
-            } catch {
-              // Disposal is best-effort while the agent is shutting down.
-            }
-          },
-        });
-      } catch (error) {
-        warn(ctx, `Project plugin "${name}" failed to mount`, error);
-        state.pluginMounts.set(name, {
-          path: file.path,
-          failed: true,
-          error: errorText(error),
-        });
-      }
-    }
-  }
-
-  // ---------------------------------------------------------------------------
   // Catalogs.
   // ---------------------------------------------------------------------------
 
@@ -463,31 +359,6 @@ export async function apply(ctx, config = {}) {
       live.set(root, row);
     }
     return live;
-  }
-
-  async function catalogPlugins(root) {
-    if (root === PROFILE_SCOPE) return [];
-    const files = await listProjectPlugins(root);
-    const policy = projectEntry(root)?.disabledPlugins ?? new Set();
-    const statuses = new Map();
-    for (const state of agentStates.values()) {
-      if (state.projectRoot !== root) continue;
-      for (const [name, mount] of state.pluginMounts) {
-        if (mount.failed) statuses.set(name, { status: 'failed', error: mount.error });
-        else statuses.set(name, { status: 'mounted' });
-      }
-    }
-    return files.map((file) => {
-      const live = statuses.get(file.name);
-      return {
-        name: file.name,
-        fileName: file.fileName,
-        path: file.path,
-        enabled: !policy.has(file.name),
-        status: live?.status ?? (policy.has(file.name) ? 'disabled' : 'available'),
-        ...(live?.error ? { error: live.error } : {}),
-      };
-    });
   }
 
   async function catalogSkills(scope, scopeAgents) {
@@ -605,9 +476,6 @@ export async function apply(ctx, config = {}) {
       projects: [...projectRows.values()].sort((left, right) => left.root.localeCompare(right.root)),
       tools: catalogTools(scope),
       skills: await catalogSkills(scope, scopeAgents),
-      plugins: await catalogPlugins(scope),
-      pluginDir: scope === PROFILE_SCOPE ? null : join(scope, ...PLUGIN_DIRECTORY),
-      profilePluginScope: scope === PROFILE_SCOPE,
     };
   }
 
@@ -739,22 +607,6 @@ export async function apply(ctx, config = {}) {
     return commitChange(scope);
   }
 
-  async function setPluginEnabled(args) {
-    if (!isPlainRecord(args) || typeof args.enabled !== 'boolean' || typeof args.name !== 'string') {
-      throw new Error('Expected { scope, name, enabled }.');
-    }
-    const scope = scopeKey(args.scope);
-    if (scope === PROFILE_SCOPE) {
-      throw new Error('Profile plugins are load-time and managed in Settings → Plugins; this page only manages project plugin packs.');
-    }
-    const files = await listProjectPlugins(scope);
-    if (!files.some((file) => file.name === args.name)) throw new Error(`Unknown project plugin: ${args.name}`);
-    const entry = projectEntry(scope, true);
-    if (args.enabled) entry.disabledPlugins.delete(args.name);
-    else entry.disabledPlugins.add(args.name);
-    return commitChange(scope);
-  }
-
   async function addProject(args) {
     if (!isPlainRecord(args) || typeof args.root !== 'string' || !isAbsolute(args.root)) {
       throw new Error('Expected { root: absolute directory }.');
@@ -773,13 +625,6 @@ export async function apply(ctx, config = {}) {
     return commitChange(root);
   }
 
-  async function refreshProjectPlugins(args) {
-    const scope = scopeKey(args?.scope);
-    if (scope === PROFILE_SCOPE) throw new Error('Profile plugins are load-time and cannot be reloaded from this page.');
-    await reapplyAll();
-    return getCatalog({ scope });
-  }
-
   async function applyAgentPolicy(state) {
     if (!state.active) return;
     const cwd = safeCwd(state.agent);
@@ -792,8 +637,6 @@ export async function apply(ctx, config = {}) {
     syncToolRestriction(state);
     if (changed) await primeOriginals(state);
     state.providerControl?.invalidate();
-    schedulePluginSync(state);
-    await state.pluginQueue;
   }
 
   async function attachAgent(agent) {
@@ -815,8 +658,6 @@ export async function apply(ctx, config = {}) {
       guardRelease: undefined,
       providerRelease: undefined,
       providerControl: undefined,
-      pluginMounts: new Map(),
-      pluginQueue: Promise.resolve(),
     };
     agentStates.set(agent, state);
 
@@ -836,11 +677,9 @@ export async function apply(ctx, config = {}) {
         await primeOriginals(state);
         registerSkillProvider(state);
         state.providerControl?.invalidate();
-        schedulePluginSync(state);
-        await state.pluginQueue;
       } catch (error) {
-        // A broken skill service or project plugin must not take down the whole
-        // manager; tool restrictions are already in effect.
+        // A broken skill service must not take down the whole manager; tool
+        // restrictions are already in effect.
         warn(ctx, `Could not finish policy setup for agent ${agent.id}`, error);
       }
     })();
@@ -852,8 +691,6 @@ export async function apply(ctx, config = {}) {
     if (!state) return;
     state.active = false;
     agentStates.delete(agent);
-    for (const mount of state.pluginMounts.values()) await releaseMount(mount);
-    state.pluginMounts.clear();
     if (release) {
       try {
         state.toolRelease?.();
@@ -879,13 +716,11 @@ export async function apply(ctx, config = {}) {
           setAll,
           clearAll,
           setOnly,
-          setPluginEnabled,
           addProject,
           removeProject,
-          refreshProjectPlugins,
         };
         if (!isPlainRecord(payload) || typeof payload.method !== 'string' || !Object.hasOwn(handlers, payload.method)) {
-          throw new Error('Unknown Tools, Skills and Plugins Manager request.');
+          throw new Error('Unknown Tools & Skills Manager request.');
         }
         const value = await handlers[payload.method](payload.args);
         return Response.json({ ok: true, value });
@@ -942,10 +777,8 @@ export async function apply(ctx, config = {}) {
     setAll,
     clearAll,
     setOnly,
-    setPluginEnabled,
     addProject,
     removeProject,
-    refreshProjectPlugins,
     dispose,
   };
   activeRuntime = runtime;
@@ -960,7 +793,7 @@ export async function apply(ctx, config = {}) {
 }
 
 function requireRuntime() {
-  if (!activeRuntime) throw new Error('Tools, Skills and Plugins Manager is not active.');
+  if (!activeRuntime) throw new Error('Tools & Skills Manager is not active.');
   return activeRuntime;
 }
 
@@ -988,18 +821,10 @@ export async function setOnly(args) {
   return requireRuntime().setOnly(args);
 }
 
-export async function setPluginEnabled(args) {
-  return requireRuntime().setPluginEnabled(args);
-}
-
 export async function addProject(args) {
   return requireRuntime().addProject(args);
 }
 
 export async function removeProject(args) {
   return requireRuntime().removeProject(args);
-}
-
-export async function refreshProjectPlugins(args) {
-  return requireRuntime().refreshProjectPlugins(args);
 }

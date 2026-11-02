@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply } from '../index.js';
@@ -29,8 +29,6 @@ function createHarness(options = {}) {
     providerInvalidations: 0,
     handlers: new Map(),
     route: undefined,
-    mounted: [],
-    disposed: [],
     config: options.config || { disabledTools: [], disabledSkills: [] },
   };
 
@@ -64,14 +62,6 @@ function createHarness(options = {}) {
           record.guards.push(guard);
           return () => {};
         },
-      },
-      plugin(plugin) {
-        record.mounted.push(plugin);
-        return {
-          async dispose() {
-            record.disposed.push(plugin);
-          },
-        };
       },
     },
   };
@@ -199,8 +189,6 @@ test('project overrides re-enable and force-disable capabilities without leaking
     const profileTools = Object.fromEntries(profileCatalog.payload.value.tools.map((tool) => [tool.name, tool]));
     assert.equal(profileTools.alpha.baseEnabled, false);
     assert.equal(profileTools.beta.baseEnabled, false);
-    assert.equal(profileCatalog.payload.value.plugins.length, 0);
-    assert.equal(profileCatalog.payload.value.pluginDir, null);
 
     const clear = await invoke('setOverride', { scope: alpha, kind: 'tools', name: 'gamma', value: null });
     assert.equal(clear.status, 200);
@@ -248,51 +236,6 @@ test('changing the working directory re-computes the project policy', async () =
   }
 });
 
-test('project plugin packs mount on the agent scope and can be disabled', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'tsm-plugin-'));
-  const project = join(directory, 'project');
-  const plugins = join(project, '.dsh', 'plugins');
-  await mkdir(join(project, '.git'), { recursive: true });
-  await mkdir(plugins, { recursive: true });
-  await writeFile(join(plugins, 'hello.mjs'), 'export default function hello() {}\n', 'utf8');
-
-  const harness = createHarness({
-    cwd: project,
-    config: { disabledTools: [], disabledSkills: [], projects: { [project]: {} } },
-  });
-  const { record, invoke, eventually } = harness;
-  const dispose = await apply(harness.ctx, record.config);
-
-  try {
-    await eventually(() => record.mounted.length === 1, 'project plugin was not mounted');
-    const mounted = await invoke('getCatalog', { scope: project });
-    assert.equal(mounted.status, 200);
-    assert.equal(mounted.payload.value.pluginDir, plugins);
-    assert.equal(mounted.payload.value.plugins.length, 1);
-    assert.equal(mounted.payload.value.plugins[0].name, 'hello');
-    assert.equal(mounted.payload.value.plugins[0].enabled, true);
-    assert.equal(mounted.payload.value.plugins[0].status, 'mounted');
-
-    const off = await invoke('setPluginEnabled', { scope: project, name: 'hello', enabled: false });
-    assert.equal(off.status, 200);
-    assert.deepEqual(record.config.projects[project].disabledPlugins, ['hello']);
-    await eventually(() => record.disposed.length === 1, 'disabled plugin was not disposed');
-    const disabledCatalog = await invoke('getCatalog', { scope: project });
-    assert.equal(disabledCatalog.payload.value.plugins[0].enabled, false);
-    assert.equal(disabledCatalog.payload.value.plugins[0].status, 'disabled');
-
-    const on = await invoke('setPluginEnabled', { scope: project, name: 'hello', enabled: true });
-    assert.equal(on.status, 200);
-    await eventually(() => record.mounted.length === 2, 're-enabled plugin was not mounted again');
-
-    const profile = await invoke('setPluginEnabled', { scope: 'profile', name: 'hello', enabled: false });
-    assert.equal(profile.status, 400);
-    assert.match(profile.payload.error, /load-time/);
-  } finally {
-    await dispose();
-  }
-});
-
 test('projects can be registered and removed through the route', async () => {
   const { alpha } = await projectPair();
   const harness = createHarness({ config: { disabledTools: [], disabledSkills: [] } });
@@ -311,6 +254,10 @@ test('projects can be registered and removed through the route', async () => {
 
     const relative = await invoke('addProject', { root: 'relative/path' });
     assert.equal(relative.status, 400);
+
+    const pluginRequest = await invoke('setPluginEnabled', { scope: alpha, name: 'hello', enabled: false });
+    assert.equal(pluginRequest.status, 400);
+    assert.match(pluginRequest.payload.error, /Unknown Tools & Skills Manager request/);
   } finally {
     await dispose();
   }

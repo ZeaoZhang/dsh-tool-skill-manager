@@ -1,103 +1,79 @@
-# Tools, Skills & Plugins Manager
+# 工具/技能管理 · Tools & Skills
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/dsh) bundle that manages **tools, skills, and project plugin packs per project**.
+A [DeepSeek Harness](https://github.com/deepseek-ai/dsh) bundle that manages **tools and skills per project**.
 
-The profile-wide `disabledTools` / `disabledSkills` lists remain the defaults. Every project can then override individual entries (inherit, force on, force off) and add its own plugins under `.dsh/plugins/` — without changing the profile or affecting other projects.
+The profile-wide `disabledTools` / `disabledSkills` lists remain the defaults. Every project can then override individual entries — inherit, force on, or force off — without changing the profile or affecting other projects.
 
-## Project boundary
-
-A **project** is the nearest ancestor of the working directory that contains a `.git` marker, falling back to the working directory itself. This is the same rule `@deepseek-ai/dsh-skill-filesystem` uses for project skill roots, so project policy and project skills agree on their boundaries.
-
-Sessions are re-evaluated on every `working-directory/change`: moving a session into another checkout immediately switches its tool restriction, skill overlay, and project plugin mounts.
+> 插件不在此管理范围内：DeepSeek Harness 在启动时一次性组合插件树，第三方插件无法按项目卸载。请到「设置 → 插件」管理已安装的插件；需要按项目扩展能力时，把工具/技能注册到项目自身的技能目录或 Agent 预设中。
 
 ## Install
 
 ```yaml
-# <profile>/cordis.patch.yml
 - id: tool-skill-manager
   name: '@local/tool-skill-manager'
   config:
-    disabledTools: []
+    disabledTools: []      # profile default
     disabledSkills: []
+    projects: {}           # per-project overrides
 ```
 
-The bundle also inserts its own row, so a profile that only links the package still mounts it. Keep the row id unique and stable: the Settings page persists through `configEditor`, which only addresses an entry whose id appears exactly once in the profile root.
+The `id` must stay unique and addressable: the Settings page persists through `configEditor`, which refuses to write an entry it cannot address unambiguously.
 
 ## Configuration
+
+| Field | Meaning |
+| --- | --- |
+| `disabledTools` | Global tool names disabled for every project (the profile default) |
+| `disabledSkills` | Global skill names disabled for every project |
+| `projects.<absolute root>.tools.<name>` | `true` force-enables, `false` force-disables; omit to inherit |
+| `projects.<absolute root>.skills.<name>` | Same override semantics for skills |
+
+A project boundary is the nearest ancestor of the session's working directory that contains a `.git` marker — the same rule `dsh-skill-filesystem` uses for project skill roots, falling back to the working directory itself.
 
 ```yaml
 - id: tool-skill-manager
   name: '@local/tool-skill-manager'
   config:
-    # Profile defaults, applied to every project.
     disabledTools: [weather]
-    disabledSkills: [some-skill]
-
-    # Optional per-project overrides, keyed by absolute project root.
+    disabledSkills: []
     projects:
       /Users/me/code/my-app:
         tools:
-          weather: true        # force-enable although disabled profile-wide
-          web_search: false    # force-disable for this project only
+          weather: true        # force this tool on for this project
+          code_interpreter: false
         skills:
           deploy: false
-        disabledPlugins: [experimental-pack]
 ```
 
-| Field | Meaning |
-|---|---|
-| `disabledTools` | Profile-wide tool names denied to every agent |
-| `disabledSkills` | Profile-wide skill names denied to every agent |
-| `projects.<root>.tools` | `true` force-enables, `false` force-disables for that project |
-| `projects.<root>.skills` | Same, for skills |
-| `projects.<root>.disabledPlugins` | Project plugin pack file stems that stay unmounted |
-
-Effective policy = profile defaults with the project's overrides applied. An override of `true` wins over a profile-wide disable; `false` wins over the default enable.
+Overrides are machine-local: they live in the active profile's patch, not in the project repository.
 
 ## Settings page
 
-Settings → Plugins → **Tools, Skills & Plugins**.
+Settings → Plugins → **工具/技能管理** (`Tools & Skills`).
 
-- **Scope selector** — `Profile defaults` or any live/configured project. `Add project…` registers an absolute path; `Remove project` deletes its overrides (plugin files are left alone).
-- **Tools / Skills** — profile scope uses a checkbox; project scope uses a three-state control (inherit / force on / force off) and shows the profile default. Bulk actions only touch the rows currently visible under the search filter.
-- **Plugins** — profile scope explains that profile plugins load at startup and are managed under Settings → Plugins; project scope lists `.dsh/plugins/*.mjs` packs with mount status and per-pack toggles.
+- **Scope selector** — `Profile defaults` or any live/configured project. `Add project…` registers an absolute path; `Remove project` deletes its overrides.
+- **Tools / Skills tabs** — search, per-row switches, bulk enable/disable, and (project scope) a tri-state override: inherit, force on, force off.
+- **Skills** additionally shows source invocation policy and a project-scope “Keep only this” action.
+- Sessions are re-evaluated on every `working-directory/change`: moving a session into another checkout immediately switches its tool restriction and skill overlay.
 
-## Project plugin packs
+## Enforcement
 
-Profile plugins are composed once at startup and cannot be unloaded for a single project. The supported per-project extension point is a **plugin pack**:
-
-```
-my-app/
-  .dsh/
-    plugins/
-      experimental.mjs
-```
-
-```js
-// my-app/.dsh/plugins/experimental.mjs
-export default function experimental(ctx) {
-  ctx.tools.register({ /* ordinary Cordis tool definition */ });
-  ctx.skills.registerProvider(() => ({ /* ... */ }));
-}
-```
-
-The default export is a normal Cordis plugin. The manager mounts it on the **agent context** of sessions whose project root contains that file, so tools and skills it registers are scoped to those sessions and disappear when the project changes, the pack is disabled, or the session ends. Packs are re-imported from disk by mtime when reloaded; failures are surfaced in the UI and retried on the next synchronization.
-
-Because mounting is agent-scoped, a pack can shadow a profile tool name for its own project while other projects keep the global registration.
+- **Tools** — the effective project policy becomes a per-agent `tools.restrict({ deny })`; names are denied as soon as their plugin registers them, so a disabled tool never reaches the model.
+- **Skills** — a per-agent provider overlays disabled entries as uninvocable (stable catalog), and a `skill`-tool guard refuses to load them.
 
 ## Development
 
 ```bash
-npm test          # node --test test/*.test.js
+npm test      # node --test test/*.test.js
 ```
 
-The tests use a fake Cordis context: per-agent tool restrictions, skill overlay/guard, working-directory changes, project overrides, project plugin mount/unmount, and route validation.
+The tests use a fake Cordis context: per-agent tool restrictions, skill overlay/guard, working-directory changes, project overrides, project registration/removal, and route validation.
 
 ## Limitations
 
-- Profile plugins themselves remain profile-global; the Plugins tab is read-only at profile scope.
-- Only global tool registrations are listed. Agent-local registrations (including a project pack's own tools) cannot be restricted from within their own scope.
-- Per-project overrides live in the profile patch, not in the project repository, so they are machine-local.
+- Only global tool registrations are listed; agent-scoped tools registered by presets or other plugins are managed by their own composition.
+- Skills come from the Harness workspace catalog plus project roots (`<project>/.dsh/skills`, `<project>/.agents/skills`).
+- Profile plugins are composed at startup and are intentionally out of scope.
 
 ## License
 
